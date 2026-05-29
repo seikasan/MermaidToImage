@@ -105,6 +105,10 @@ async function renderDiagram() {
             theme: state.theme,
             securityLevel: "strict",
             fontFamily: "Inter, Segoe UI, system-ui, -apple-system, BlinkMacSystemFont, sans-serif",
+            flowchart: {
+                htmlLabels: false,
+                useMaxWidth: true,
+            },
         });
         const result = await mermaid.render(`mermaid-${Date.now()}-${token}`, code);
         if (token !== state.renderToken) {
@@ -190,12 +194,13 @@ function buildExportSvg() {
     const height = Math.ceil(box.height * scale + state.padding * 2);
     const content = serializeChildren(original);
     const safeBackground = escapeAttribute(state.background);
+    const safeId = escapeAttribute(original.getAttribute("id") || "mermaid-export");
     return {
         width: state.width,
         height,
         svg: [
             '<?xml version="1.0" encoding="UTF-8"?>',
-            `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${state.width}" height="${height}" viewBox="0 0 ${state.width} ${height}">`,
+            `<svg id="${safeId}" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${state.width}" height="${height}" viewBox="0 0 ${state.width} ${height}">`,
             `<rect width="100%" height="100%" fill="${safeBackground}"/>`,
             `<g transform="translate(${state.padding} ${state.padding}) scale(${scale}) translate(${-box.x} ${-box.y})">`,
             content,
@@ -214,16 +219,30 @@ function parseSvg(svgText) {
     return svg;
 }
 function sanitizeSvgForCanvas(svg) {
-    svg
-        .querySelectorAll("script, foreignObject, iframe, canvas, audio, video")
-        .forEach((element) => element.remove());
-    svg.querySelectorAll("style").forEach((styleElement) => {
-        styleElement.textContent = sanitizeCss(styleElement.textContent ?? "");
-    });
+    replaceForeignObjectsWithText(svg);
+    const unsafeElements = new Set([
+        "audio",
+        "canvas",
+        "foreignobject",
+        "iframe",
+        "script",
+        "video",
+    ]);
     svg.querySelectorAll("*").forEach((element) => {
+        if (unsafeElements.has(element.localName.toLowerCase())) {
+            element.remove();
+            return;
+        }
+        if (element.localName.toLowerCase() === "style") {
+            element.textContent = sanitizeCss(element.textContent ?? "");
+        }
         Array.from(element.attributes).forEach((attribute) => {
             const name = attribute.name.toLowerCase();
             const value = attribute.value.trim();
+            if (name.startsWith("on")) {
+                element.removeAttribute(attribute.name);
+                return;
+            }
             if (name === "style") {
                 element.setAttribute(attribute.name, sanitizeCss(value));
                 return;
@@ -237,6 +256,42 @@ function sanitizeSvgForCanvas(svg) {
             }
         });
     });
+}
+function replaceForeignObjectsWithText(svg) {
+    svg.querySelectorAll("*").forEach((element) => {
+        if (element.localName.toLowerCase() !== "foreignobject") {
+            return;
+        }
+        const label = normalizeLabelText(element.textContent ?? "");
+        if (!label) {
+            element.remove();
+            return;
+        }
+        const width = parseSvgLength(element.getAttribute("width")) ?? 0;
+        const height = parseSvgLength(element.getAttribute("height")) ?? 0;
+        const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+        text.setAttribute("x", String(width / 2));
+        text.setAttribute("y", String(height / 2));
+        text.setAttribute("text-anchor", "middle");
+        text.setAttribute("dominant-baseline", "middle");
+        label.split("\n").forEach((line, index, lines) => {
+            const tspan = document.createElementNS("http://www.w3.org/2000/svg", "tspan");
+            tspan.setAttribute("x", String(width / 2));
+            if (lines.length > 1) {
+                tspan.setAttribute("dy", index === 0 ? "-0.35em" : "1.2em");
+            }
+            tspan.textContent = line;
+            text.append(tspan);
+        });
+        element.replaceWith(text);
+    });
+}
+function normalizeLabelText(value) {
+    return value
+        .split(/\r?\n/)
+        .map((line) => line.replace(/\s+/g, " ").trim())
+        .filter(Boolean)
+        .join("\n");
 }
 function sanitizeCss(css) {
     return css
@@ -296,6 +351,7 @@ function loadImageFromSvg(svg) {
     return new Promise((resolve, reject) => {
         const url = svgToDataUrl(svg);
         const image = new Image();
+        image.crossOrigin = "anonymous";
         image.onload = () => {
             resolve(image);
         };
@@ -306,7 +362,14 @@ function loadImageFromSvg(svg) {
     });
 }
 function svgToDataUrl(svg) {
-    return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+    const bytes = new TextEncoder().encode(svg);
+    let binary = "";
+    const chunkSize = 8192;
+    for (let index = 0; index < bytes.length; index += chunkSize) {
+        const chunk = bytes.slice(index, index + chunkSize);
+        binary += String.fromCharCode(...chunk);
+    }
+    return `data:image/svg+xml;base64,${btoa(binary)}`;
 }
 function canvasToBlob(canvas) {
     return new Promise((resolve, reject) => {

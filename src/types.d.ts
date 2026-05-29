@@ -11,6 +11,10 @@ interface MermaidApi {
     theme: MermaidTheme;
     securityLevel: "strict";
     fontFamily: string;
+    flowchart: {
+      htmlLabels: boolean;
+      useMaxWidth: boolean;
+    };
   }) => void;
   render: (
     id: string,
