@@ -232,6 +232,7 @@ async function downloadAsPng(): Promise<void> {
 
 function buildExportSvg(): { svg: string; width: number; height: number } {
   const original = parseSvg(state.currentSvg);
+  sanitizeSvgForCanvas(original);
   const box = getSvgBox(original);
   const usableWidth = Math.max(1, state.width - state.padding * 2);
   const scale = usableWidth / box.width;
@@ -244,7 +245,7 @@ function buildExportSvg(): { svg: string; width: number; height: number } {
     height,
     svg: [
       '<?xml version="1.0" encoding="UTF-8"?>',
-      `<svg xmlns="http://www.w3.org/2000/svg" width="${state.width}" height="${height}" viewBox="0 0 ${state.width} ${height}">`,
+      `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${state.width}" height="${height}" viewBox="0 0 ${state.width} ${height}">`,
       `<rect width="100%" height="100%" fill="${safeBackground}"/>`,
       `<g transform="translate(${state.padding} ${state.padding}) scale(${scale}) translate(${-box.x} ${-box.y})">`,
       content,
@@ -267,6 +268,60 @@ function parseSvg(svgText: string): SVGSVGElement {
   }
 
   return svg as unknown as SVGSVGElement;
+}
+
+function sanitizeSvgForCanvas(svg: SVGSVGElement): void {
+  svg
+    .querySelectorAll("script, foreignObject, iframe, canvas, audio, video")
+    .forEach((element) => element.remove());
+
+  svg.querySelectorAll("style").forEach((styleElement) => {
+    styleElement.textContent = sanitizeCss(styleElement.textContent ?? "");
+  });
+
+  svg.querySelectorAll("*").forEach((element) => {
+    Array.from(element.attributes).forEach((attribute) => {
+      const name = attribute.name.toLowerCase();
+      const value = attribute.value.trim();
+
+      if (name === "style") {
+        element.setAttribute(attribute.name, sanitizeCss(value));
+        return;
+      }
+
+      if (isReferenceAttribute(name) && isUnsafeReference(value)) {
+        element.removeAttribute(attribute.name);
+        return;
+      }
+
+      if (hasUnsafeCssUrl(value)) {
+        element.removeAttribute(attribute.name);
+      }
+    });
+  });
+}
+
+function sanitizeCss(css: string): string {
+  return css
+    .replace(/@import[^;]+;/gi, "")
+    .replace(/@font-face\s*\{[^}]*\}/gi, "")
+    .replace(/url\(\s*(['"]?)(?!#|data:image\/)[^)]+\1\s*\)/gi, "none");
+}
+
+function isReferenceAttribute(name: string): boolean {
+  return name === "href" || name === "src" || name.endsWith(":href");
+}
+
+function isUnsafeReference(value: string): boolean {
+  if (!value || value.startsWith("#") || value.startsWith("data:image/")) {
+    return false;
+  }
+
+  return /^(https?:|file:|blob:|data:)/i.test(value);
+}
+
+function hasUnsafeCssUrl(value: string): boolean {
+  return /url\(\s*(['"]?)(?!#|data:image\/)[^)]+\1\s*\)/i.test(value);
 }
 
 function getSvgBox(svg: SVGSVGElement): SvgBox {
@@ -315,16 +370,13 @@ function serializeChildren(element: Element): string {
 
 function loadImageFromSvg(svg: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
-    const blob = new Blob([svg], { type: "image/svg+xml;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
+    const url = svgToDataUrl(svg);
     const image = new Image();
 
     image.onload = () => {
-      URL.revokeObjectURL(url);
       resolve(image);
     };
     image.onerror = () => {
-      URL.revokeObjectURL(url);
       reject(new Error("PNG変換用の画像を読み込めませんでした。"));
     };
 
@@ -332,16 +384,38 @@ function loadImageFromSvg(svg: string): Promise<HTMLImageElement> {
   });
 }
 
+function svgToDataUrl(svg: string): string {
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+}
+
 function canvasToBlob(canvas: HTMLCanvasElement): Promise<Blob> {
   return new Promise((resolve, reject) => {
-    canvas.toBlob((blob) => {
-      if (blob) {
-        resolve(blob);
-      } else {
-        reject(new Error("PNGファイルを作成できませんでした。"));
-      }
-    }, "image/png");
+    try {
+      canvas.toBlob((blob) => {
+        if (blob) {
+          resolve(blob);
+        } else {
+          reject(new Error("PNGファイルを作成できませんでした。"));
+        }
+      }, "image/png");
+    } catch (error) {
+      reject(toCanvasExportError(error));
+    }
   });
+}
+
+function toCanvasExportError(error: unknown): Error {
+  if (error instanceof DOMException && error.name === "SecurityError") {
+    return new Error(
+      "PNG保存に失敗しました。SVG内の外部画像や外部フォント参照を削除してください。",
+    );
+  }
+
+  if (error instanceof Error) {
+    return error;
+  }
+
+  return new Error("PNGファイルを作成できませんでした。");
 }
 
 function downloadBlob(blob: Blob, fileName: string): void {
