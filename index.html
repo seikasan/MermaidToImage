@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Mermaid記法の図をブラウザ上でプレビューし、PNGまたはSVGとして保存できます。"
+    />
+    <title>MermaidToImage</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <script type="module" src="./assets/main.js"></script>
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="app-header">
+        <div>
+          <p class="eyebrow">Mermaid diagram exporter</p>
+          <h1>MermaidToImage</h1>
+        </div>
+        <div class="actions" aria-label="画像保存">
+          <button class="button button-primary" id="downloadPng" type="button" disabled>
+            <span aria-hidden="true">PNG</span>
+            保存
+          </button>
+          <button class="button button-secondary" id="downloadSvg" type="button" disabled>
+            <span aria-hidden="true">SVG</span>
+            保存
+          </button>
+        </div>
+      </header>
+
+      <section class="toolbar" aria-label="出力設定">
+        <label class="field">
+          <span>テーマ</span>
+          <select id="themeSelect">
+            <option value="default">Default</option>
+            <option value="neutral">Neutral</option>
+            <option value="forest">Forest</option>
+            <option value="dark">Dark</option>
+            <option value="base">Base</option>
+          </select>
+        </label>
+
+        <label class="field field-color">
+          <span>背景</span>
+          <input id="backgroundColor" type="color" value="#ffffff" />
+        </label>
+
+        <label class="field">
+          <span>幅</span>
+          <input
+            id="outputWidth"
+            type="number"
+            min="320"
+            max="4000"
+            step="20"
+            value="1200"
+            inputmode="numeric"
+          />
+        </label>
+
+        <label class="field">
+          <span>余白</span>
+          <input
+            id="paddingSize"
+            type="number"
+            min="0"
+            max="200"
+            step="4"
+            value="32"
+            inputmode="numeric"
+          />
+        </label>
+
+        <p class="status" id="statusMessage" role="status" aria-live="polite">
+          Mermaidを読み込んでいます。
+        </p>
+      </section>
+
+      <main class="workspace">
+        <section class="editor-panel" aria-labelledby="editorTitle">
+          <div class="panel-header">
+            <h2 id="editorTitle">Mermaid入力</h2>
+          </div>
+          <textarea
+            id="mermaidInput"
+            spellcheck="false"
+            aria-label="Mermaidコード"
+          ></textarea>
+        </section>
+
+        <section class="preview-panel" aria-labelledby="previewTitle">
+          <div class="panel-header">
+            <h2 id="previewTitle">プレビュー</h2>
+          </div>
+          <div class="preview-scroll">
+            <div class="preview-surface" id="previewSurface">
+              <div class="diagram-stage" id="diagramStage">
+                <p class="placeholder">読み込み中です。</p>
+              </div>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+  </body>
+</html>
