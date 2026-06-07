@@ -150,7 +150,7 @@ textarea:focus-visible {
 
 .toolbar {
   display: grid;
-  grid-template-columns: repeat(4, minmax(130px, 1fr)) minmax(220px, 1.35fr);
+  grid-template-columns: repeat(6, minmax(110px, 1fr));
   gap: 10px;
   align-items: end;
   border: 1px solid var(--line);
@@ -184,6 +184,7 @@ textarea:focus-visible {
 }
 
 .status {
+  grid-column: 1 / -1;
   align-self: stretch;
   display: flex;
   align-items: center;
@@ -272,7 +273,7 @@ textarea {
 .preview-surface {
   width: min(var(--export-width, 1200px), 100%);
   min-width: min(100%, 320px);
-  min-height: 360px;
+  min-height: min(var(--export-height, 800px), 70vh);
   margin: 0 auto;
   padding: var(--export-padding, 32px);
   border: 1px solid var(--line-strong);
@@ -301,11 +302,7 @@ textarea {
 
 @media (max-width: 980px) {
   .toolbar {
-    grid-template-columns: repeat(2, minmax(140px, 1fr));
-  }
-
-  .status {
-    grid-column: 1 / -1;
+    grid-template-columns: repeat(3, minmax(140px, 1fr));
   }
 
   .workspace {

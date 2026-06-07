@@ -13,7 +13,9 @@ interface AppState {
   theme: MermaidTheme;
   background: string;
   width: number;
+  height: number;
   padding: number;
+  minScale: number;
   currentSvg: string;
   error: string | null;
   renderToken: number;
@@ -26,12 +28,22 @@ interface SvgBox {
   height: number;
 }
 
+interface ExportLayout {
+  width: number;
+  height: number;
+  scale: number;
+  offsetX: number;
+  offsetY: number;
+}
+
 const state: AppState = {
   code: SAMPLE_CODE,
   theme: "default",
   background: "#ffffff",
   width: 1200,
+  height: 800,
   padding: 32,
+  minScale: 1,
   currentSvg: "",
   error: null,
   renderToken: 0,
@@ -44,7 +56,9 @@ const input = getElement<HTMLTextAreaElement>("mermaidInput");
 const themeSelect = getElement<HTMLSelectElement>("themeSelect");
 const backgroundInput = getElement<HTMLInputElement>("backgroundColor");
 const widthInput = getElement<HTMLInputElement>("outputWidth");
+const heightInput = getElement<HTMLInputElement>("outputHeight");
 const paddingInput = getElement<HTMLInputElement>("paddingSize");
+const minScaleInput = getElement<HTMLInputElement>("minScale");
 const statusMessage = getElement<HTMLElement>("statusMessage");
 const previewSurface = getElement<HTMLElement>("previewSurface");
 const diagramStage = getElement<HTMLElement>("diagramStage");
@@ -55,7 +69,9 @@ input.value = state.code;
 themeSelect.value = state.theme;
 backgroundInput.value = state.background;
 widthInput.value = String(state.width);
+heightInput.value = String(state.height);
 paddingInput.value = String(state.padding);
+minScaleInput.value = String(state.minScale);
 updatePreviewSettings();
 
 void boot();
@@ -93,12 +109,27 @@ function bindEvents(): void {
     state.width = readNumber(widthInput, 320, 4000, state.width);
     widthInput.value = String(state.width);
     updatePreviewSettings();
+    updateReadyStatus();
+  });
+
+  heightInput.addEventListener("input", () => {
+    state.height = readNumber(heightInput, 320, 4000, state.height);
+    heightInput.value = String(state.height);
+    updatePreviewSettings();
+    updateReadyStatus();
   });
 
   paddingInput.addEventListener("input", () => {
     state.padding = readNumber(paddingInput, 0, 200, state.padding);
     paddingInput.value = String(state.padding);
     updatePreviewSettings();
+    updateReadyStatus();
+  });
+
+  minScaleInput.addEventListener("input", () => {
+    state.minScale = readDecimal(minScaleInput, 0.1, 4, state.minScale);
+    minScaleInput.value = formatScale(state.minScale);
+    updateReadyStatus();
   });
 
   downloadPng.addEventListener("click", () => {
@@ -158,7 +189,7 @@ async function renderDiagram(): Promise<void> {
     state.error = null;
     diagramStage.innerHTML = result.svg;
     result.bindFunctions?.(diagramStage);
-    setStatus("プレビューを更新しました。", "ready");
+    updateReadyStatus("プレビューを更新しました。");
   } catch (error) {
     if (token !== state.renderToken) {
       return;
@@ -178,6 +209,7 @@ async function renderDiagram(): Promise<void> {
 function updatePreviewSettings(): void {
   previewSurface.style.setProperty("--export-background", state.background);
   previewSurface.style.setProperty("--export-width", `${state.width}px`);
+  previewSurface.style.setProperty("--export-height", `${state.height}px`);
   previewSurface.style.setProperty("--export-padding", `${state.padding}px`);
 }
 
@@ -191,6 +223,23 @@ function setStatus(message: string, type: "ready" | "busy" | "error"): void {
   statusMessage.textContent = message;
   statusMessage.classList.toggle("is-busy", type === "busy");
   statusMessage.classList.toggle("is-error", type === "error");
+}
+
+function updateReadyStatus(prefix = "保存設定を更新しました。"): void {
+  if (state.error || !state.currentSvg) {
+    return;
+  }
+
+  const layout = getCurrentExportLayout();
+  if (!layout) {
+    setStatus(prefix, "ready");
+    return;
+  }
+
+  setStatus(
+    `${prefix} 保存サイズ: ${layout.width} x ${layout.height}px / 倍率: ${formatScale(layout.scale)}`,
+    "ready",
+  );
 }
 
 function downloadAsSvg(): void {
@@ -238,25 +287,56 @@ function buildExportSvg(): { svg: string; width: number; height: number } {
   const original = parseSvg(state.currentSvg);
   sanitizeSvgForCanvas(original);
   const box = getSvgBox(original);
-  const usableWidth = Math.max(1, state.width - state.padding * 2);
-  const scale = usableWidth / box.width;
-  const height = Math.ceil(box.height * scale + state.padding * 2);
+  const layout = calculateExportLayout(box);
   const content = serializeChildren(original);
   const safeBackground = escapeAttribute(state.background);
   const safeId = escapeAttribute(original.getAttribute("id") || "mermaid-export");
 
   return {
-    width: state.width,
-    height,
+    width: layout.width,
+    height: layout.height,
     svg: [
       '<?xml version="1.0" encoding="UTF-8"?>',
-      `<svg id="${safeId}" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${state.width}" height="${height}" viewBox="0 0 ${state.width} ${height}">`,
+      `<svg id="${safeId}" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${layout.width}" height="${layout.height}" viewBox="0 0 ${layout.width} ${layout.height}">`,
       `<rect width="100%" height="100%" fill="${safeBackground}"/>`,
-      `<g transform="translate(${state.padding} ${state.padding}) scale(${scale}) translate(${-box.x} ${-box.y})">`,
+      `<g transform="translate(${layout.offsetX} ${layout.offsetY}) scale(${layout.scale}) translate(${-box.x} ${-box.y})">`,
       content,
       "</g>",
       "</svg>",
     ].join(""),
+  };
+}
+
+function getCurrentExportLayout(): ExportLayout | null {
+  try {
+    const svg = parseSvg(state.currentSvg);
+    return calculateExportLayout(getSvgBox(svg));
+  } catch {
+    return null;
+  }
+}
+
+function calculateExportLayout(box: SvgBox): ExportLayout {
+  const usableWidth = Math.max(1, state.width - state.padding * 2);
+  const usableHeight = Math.max(1, state.height - state.padding * 2);
+  const containedScale = Math.min(
+    usableWidth / box.width,
+    usableHeight / box.height,
+  );
+  const scale = Math.max(containedScale, state.minScale);
+  const contentWidth = box.width * scale;
+  const contentHeight = box.height * scale;
+  const width = Math.ceil(Math.max(state.width, contentWidth + state.padding * 2));
+  const height = Math.ceil(
+    Math.max(state.height, contentHeight + state.padding * 2),
+  );
+
+  return {
+    width,
+    height,
+    scale,
+    offsetX: (width - contentWidth) / 2,
+    offsetY: (height - contentHeight) / 2,
   };
 }
 
@@ -515,6 +595,24 @@ function readNumber(
   }
 
   return Math.min(max, Math.max(min, parsed));
+}
+
+function readDecimal(
+  element: HTMLInputElement,
+  min: number,
+  max: number,
+  fallback: number,
+): number {
+  const parsed = Number.parseFloat(element.value);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+
+  return Math.min(max, Math.max(min, parsed));
+}
+
+function formatScale(value: number): string {
+  return Number.isInteger(value) ? String(value) : value.toFixed(1);
 }
 
 function getElement<T extends HTMLElement>(id: string): T {
